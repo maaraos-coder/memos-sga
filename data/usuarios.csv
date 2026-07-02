@@ -1,0 +1,4 @@
+usuario,nombre,rol,password_hash,oficina
+admin,Administrador,Administrador,240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9,
+jefatura,Jefatura Gestión Ambiental,Jefatura,2e44c1606d4a2975dd2dcb9033c2c09496641b3631d01dc5dcfb863dc2526f0b,
+marco,Marco Araos Barría,Funcionario,729205b953d3ed92521af557c6384d88964c37c38798772f2e107232a6d1ad7b,Oficina de Acústica y Vibraciones

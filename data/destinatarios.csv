@@ -1,0 +1,10 @@
+id,departamento,jefatura,nombre,correo,activo
+1,Gabinete,Jefe(a) de Gabinete,Nombre Jefatura Gabinete,gabinete@redsalud.gov.cl,SI
+2,Departamento COMPIN,Jefe(a) Departamento COMPIN,Nombre Jefatura COMPIN,compin@redsalud.gov.cl,SI
+3,Departamento de Administración y Finanzas,Jefe(a) Departamento de Administración y Finanzas,Nombre Jefatura Administración,administracion@redsalud.gov.cl,SI
+4,Departamento de Comunicaciones y RRPP,Jefe(a) Departamento de Comunicaciones y RRPP,Nombre Jefatura Comunicaciones,comunicaciones@redsalud.gov.cl,SI
+5,Departamento Jurídico,Jefe(a) Departamento Jurídico,Nombre Jefatura Jurídico,juridico@redsalud.gov.cl,SI
+6,Departamento Laboratorio de Salud Pública, Ambiental y Laboral,Jefe(a) Departamento Laboratorio de Salud Pública Ambiental y Laboral,Nombre Jefatura Laboratorio,laboratorio@redsalud.gov.cl,SI
+7,Departamento de Acción Sanitaria,Jefe(a) Departamento de Acción Sanitaria,Nombre Jefatura DAS,das@redsalud.gov.cl,SI
+8,Departamento de Salud Pública y Planificación Sanitaria,Jefe(a) Departamento de Salud Pública y Planificación Sanitaria,Nombre Jefatura Salud Pública,saludpublica@redsalud.gov.cl,SI
+9,SEREMI de Salud RM,SEREMI de Salud Región Metropolitana,Nombre SEREMI,seremi@redsalud.gov.cl,SI

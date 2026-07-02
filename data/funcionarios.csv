@@ -1,0 +1,5 @@
+id,oficina,seccion,funcionario,cargo,correo,activo
+1,Oficina de Acústica y Vibraciones,Sección Gestión Ambiental,Marco Araos Barría,Profesional,marco.araos@redsalud.gov.cl,SI
+2,Oficina de Acústica y Vibraciones,Sección Gestión Ambiental,Nombre Funcionario 2,Profesional,funcionario2@redsalud.gov.cl,SI
+3,Oficina de SEIA,Sección Gestión Ambiental,Nombre Funcionario SEIA,Profesional,seia@redsalud.gov.cl,SI
+4,Oficina de Calificación Industrial,Sección Gestión Ambiental,Nombre Funcionario Calificación,Profesional,calificacion@redsalud.gov.cl,SI

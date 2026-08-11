@@ -256,13 +256,26 @@ def init_db():
             "destinatario": "alter table documentos add column if not exists destinatario text",
         }.items():
             conn.execute(text(ddl))
-        # El número debe ser único solo entre documentos vigentes.
-        # Los documentos anulados se conservan para trazabilidad, pero liberan su número.
+        # Desde esta versión, los documentos anulados conservan su registro histórico,
+        # pero no bloquean la reutilización de un número que haya sido liberado
+        # explícitamente desde la aplicación. Los anulados antiguos NO se reciclan.
         conn.execute(text("drop index if exists idx_documentos_numero"))
         conn.execute(text("""
             create unique index if not exists idx_documentos_numero_vigente
             on documentos(tipo, numero, anio)
-            where estado is null or estado not like 'Anulado%'
+            where coalesce(estado, 'Emitido') not like 'Anulado%'
+        """))
+
+        conn.execute(text("""
+            create table if not exists numeros_liberados (
+              tipo text not null,
+              anio integer not null,
+              numero integer not null,
+              documento_anulado_id bigint,
+              liberado_por text,
+              liberado_en timestamptz default now(),
+              primary key (tipo, anio, numero)
+            )
         """))
 
         conn.execute(text("""
@@ -538,11 +551,7 @@ def ultimos_documentos():
 
 
 def generar_documento(tipo, oficina, funcionario, dest_rows, materia, usuario_login):
-    """Genera un documento con uno o varios destinatarios.
-
-    Si existe un número previamente anulado y aún no reutilizado, se usa primero.
-    Si no existen números liberados, continúa desde el mayor número histórico/correlativo.
-    """
+    """Genera un documento con uno o varios destinatarios."""
     anio = ahora_chile().year
     key = tipo_key(tipo)
 
@@ -592,36 +601,29 @@ def generar_documento(tipo, oficina, funcionario, dest_rows, materia, usuario_lo
             {"key": key, "anio": anio}
         ).mappings().fetchone()
 
-        ultimo_correlativo = int(row["ultimo_numero"] or 0)
-
-        # Busca primero un número anulado que haya quedado efectivamente libre.
+        # Primero se reutiliza SOLO un número liberado expresamente desde esta
+        # versión. No se buscan documentos anulados históricos.
         liberado = conn.execute(text("""
-            select min(d.numero)
-            from documentos d
-            where d.tipo=:tipo
-              and d.anio=:anio
-              and coalesce(d.estado, 'Emitido') like 'Anulado%'
-              and not exists (
-                  select 1
-                  from documentos v
-                  where v.tipo=d.tipo
-                    and v.anio=d.anio
-                    and v.numero=d.numero
-                    and coalesce(v.estado, 'Emitido') not like 'Anulado%'
-              )
-        """), {"tipo": tipo, "anio": anio}).scalar()
+            select numero
+            from numeros_liberados
+            where tipo=:key and anio=:anio
+            order by numero asc
+            for update skip locked
+            limit 1
+        """), {"key": key, "anio": anio}).mappings().fetchone()
 
-        if liberado is not None:
-            nuevo = int(liberado)
-            numero_reutilizado = True
+        if liberado:
+            nuevo = int(liberado["numero"])
         else:
-            max_historico = conn.execute(text("""
-                select coalesce(max(numero), 0)
+            # El correlativo nunca debe quedar por debajo del mayor número vigente.
+            max_vigente = conn.execute(text("""
+                select coalesce(max(numero), 0) as max_numero
                 from documentos
                 where tipo=:tipo and anio=:anio
-            """), {"tipo": tipo, "anio": anio}).scalar() or 0
-            nuevo = max(ultimo_correlativo, int(max_historico)) + 1
-            numero_reutilizado = False
+                  and coalesce(estado, 'Emitido') not like 'Anulado%'
+            """), {"tipo": tipo, "anio": anio}).mappings().fetchone()
+            base = max(int(row["ultimo_numero"] or 0), int(max_vigente["max_numero"] or 0))
+            nuevo = base + 1
 
         conn.execute(text("""
             insert into documentos(
@@ -629,7 +631,7 @@ def generar_documento(tipo, oficina, funcionario, dest_rows, materia, usuario_lo
                 funcionario, seccion_destino, jefatura_destino, destinatario_nombre,
                 destinatario, materia, usuario_creador, estado
             ) values(
-                :tipo, :numero, :anio, now(), 'Sección Gestión Ambiental', :oficina,
+                :tipo, :numero, :anio, now() at time zone 'America/Santiago', 'Sección Gestión Ambiental', :oficina,
                 :funcionario, :seccion, :jefatura, :nombre,
                 :destinatario, :materia, :usuario, 'Emitido'
             )
@@ -647,21 +649,22 @@ def generar_documento(tipo, oficina, funcionario, dest_rows, materia, usuario_lo
             "usuario": usuario_login,
         })
 
-        # El correlativo funciona como máximo histórico y nunca debe bajar
-        # por la anulación de un número antiguo.
-        nuevo_maximo = max(ultimo_correlativo, nuevo)
-        conn.execute(text("""
-            update correlativos
-            set ultimo_numero=:n, actualizado_por=:u, actualizado_en=now()
-            where tipo=:key and anio=:anio
-        """), {"n": nuevo_maximo, "u": usuario_login, "key": key, "anio": anio})
+        if liberado:
+            conn.execute(text("""
+                delete from numeros_liberados
+                where tipo=:key and anio=:anio and numero=:numero
+            """), {"key": key, "anio": anio, "numero": nuevo})
+        else:
+            conn.execute(text("""
+                update correlativos set ultimo_numero=:n, actualizado_por=:u, actualizado_en=now()
+                where tipo=:key and anio=:anio
+            """), {"n": nuevo, "u": usuario_login, "key": key, "anio": anio})
 
-        accion_numero = "reutilizado" if numero_reutilizado else "nuevo"
         log_auditoria_db(
             conn,
             usuario_login,
             "Genera documento",
-            f"{tipo} N° {nuevo:03d}/{anio} ({accion_numero}) con {len(partes_destinatario)} destinatario(s)"
+            f"{tipo} N° {nuevo:03d}/{anio} con {len(partes_destinatario)} destinatario(s)"
         )
 
     registros_df.clear()
@@ -1228,40 +1231,44 @@ def page_admin():
     with tab4:
         st.subheader("Anular documento")
         df = registros_df()
-        df_vigentes = df[~df["estado"].astype(str).str.startswith("Anulado")].copy() if not df.empty else df
-        if not df_vigentes.empty:
-            df_vigentes["etiqueta"] = df_vigentes.apply(
-                lambda r: f"{r['tipo_documento']} N° {int(r['numero']):03d}/{r['anio']} - {r['funcionario']} - {str(r['materia'])[:50]}",
-                axis=1
-            )
-            etiqueta = st.selectbox("Documento", df_vigentes["etiqueta"].tolist())
+        if not df.empty:
+            df["etiqueta"] = df.apply(lambda r: f"{r['tipo_documento']} N° {int(r['numero']):03d}/{r['anio']} - {r['funcionario']} - {str(r['materia'])[:50]}", axis=1)
+            etiqueta = st.selectbox("Documento", df["etiqueta"].tolist())
             motivo = st.text_input("Motivo de anulación")
-            st.warning(
-                "La anulación conserva el registro para trazabilidad, pero libera el número para que pueda ser reutilizado por un próximo documento del mismo tipo y año."
-            )
+            st.info("Al anular, el registro se conserva para trazabilidad y ESTE número queda disponible para reutilización. Los números anulados antes de esta versión no se reutilizan automáticamente.")
             if st.button("Anular registro"):
-                row = df_vigentes[df_vigentes["etiqueta"] == etiqueta].iloc[0]
-                estado = f"Anulado - {motivo}" if motivo else "Anulado"
-                engine = get_engine()
-                with engine.begin() as conn:
-                    conn.execute(
-                        text("update documentos set estado=:estado where id=:id"),
-                        {"estado": estado, "id": int(row["id"])}
-                    )
-                    log_auditoria_db(
-                        conn,
-                        st.session_state["user"]["usuario"],
-                        "Anula documento y libera número",
-                        f"{etiqueta}. Número liberado para reutilización."
-                    )
-                registros_df.clear()
-                ultimos_documentos.clear()
-                st.success(
-                    f"Documento anulado. El N° {int(row['numero']):03d}/{int(row['anio'])} quedó liberado para reutilización."
-                )
-                st.rerun()
+                row = df[df["etiqueta"] == etiqueta].iloc[0]
+                estado_actual = str(row.get("estado", "Emitido"))
+                if estado_actual.startswith("Anulado"):
+                    st.warning("Este documento ya está anulado.")
+                else:
+                    estado = f"Anulado - {motivo}" if motivo else "Anulado"
+                    engine = get_engine()
+                    with engine.begin() as conn:
+                        conn.execute(text("update documentos set estado=:estado where id=:id"), {"estado": estado, "id": int(row["id"])})
+                        conn.execute(text("""
+                            insert into numeros_liberados(tipo, anio, numero, documento_anulado_id, liberado_por, liberado_en)
+                            values(:tipo, :anio, :numero, :doc_id, :usuario, now())
+                            on conflict(tipo, anio, numero) do nothing
+                        """), {
+                            "tipo": tipo_key(str(row["tipo_documento"])),
+                            "anio": int(row["anio"]),
+                            "numero": int(row["numero"]),
+                            "doc_id": int(row["id"]),
+                            "usuario": st.session_state["user"]["usuario"],
+                        })
+                        log_auditoria_db(
+                            conn,
+                            st.session_state["user"]["usuario"],
+                            "Anula y libera número",
+                            etiqueta
+                        )
+                    registros_df.clear()
+                    ultimos_documentos.clear()
+                    st.success(f"Registro anulado. El N° {int(row['numero']):03d}/{int(row['anio'])} quedó disponible para reutilización.")
+                    st.rerun()
         else:
-            st.info("No existen documentos vigentes para anular.")
+            st.info("No existen documentos para anular.")
     with tab5:
         page_borrar_pruebas_admin()
     with tab6:
@@ -1300,7 +1307,7 @@ def main():
     elif pagina == "Administración":
         page_admin()
     st.markdown('<div class="footer-line"></div>', unsafe_allow_html=True)
-    st.caption("Versión 3.3 liberación de correlativos · SEREMI de Salud Región Metropolitana · Departamento de Acción Sanitaria · Sección Gestión Ambiental")
+    st.caption("Versión 3.1 múltiples destinatarios · SEREMI de Salud Región Metropolitana · Departamento de Acción Sanitaria · Sección Gestión Ambiental")
 
 
 if __name__ == "__main__":

@@ -172,6 +172,15 @@ def get_engine():
     if not db_url:
         st.error("No está configurado DATABASE_URL en Streamlit Secrets.")
         st.stop()
+    # La app usa psycopg2-binary (requirements.txt). Normalizamos el esquema
+    # por si DATABASE_URL quedó guardada como postgresql+psycopg:// en Secrets.
+    if db_url.startswith("postgresql+psycopg://"):
+        db_url = "postgresql+psycopg2://" + db_url[len("postgresql+psycopg://"):]
+    elif db_url.startswith("postgres://"):
+        db_url = "postgresql+psycopg2://" + db_url[len("postgres://"):]
+    elif db_url.startswith("postgresql://"):
+        db_url = "postgresql+psycopg2://" + db_url[len("postgresql://"):]
+
     return create_engine(
         db_url,
         pool_pre_ping=True,

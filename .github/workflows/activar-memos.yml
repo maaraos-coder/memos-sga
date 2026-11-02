@@ -1,0 +1,37 @@
+name: Comprobar disponibilidad MEMOS-SGA
+
+on:
+  schedule:
+    # 07:00 y 13:30 America/Santiago, en horario de verano o invierno.
+    - cron: '0 10,11 * * 1-5'
+    - cron: '30 16,17 * * 1-5'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  comprobar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Comprobar horario de Chile
+        id: horario
+        shell: bash
+        run: |
+          local_hora=$(TZ=America/Santiago date +%H:%M)
+          local_dia=$(TZ=America/Santiago date +%u)
+          echo "Hora Chile: $local_hora; día: $local_dia"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]] || { [[ "$local_dia" -le 5 ]] && { [[ "$local_hora" == "07:00" ]] || [[ "$local_hora" == "13:30" ]]; }; }; then
+            echo "ejecutar=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ejecutar=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Solicitar página pública
+        if: steps.horario.outputs.ejecutar == 'true'
+        shell: bash
+        run: |
+          curl --location --silent --show-error --max-time 90 --retry 2 --retry-delay 10 \
+            --output /dev/null --write-out 'HTTP %{http_code}; tiempo %{time_total}s\n' \
+            --fail 'https://memos-sga.streamlit.app/'
